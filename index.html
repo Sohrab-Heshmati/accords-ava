@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Les Accords d'Ava — build 2026-06-27 (fix son : déblocage AudioContext iOS) -->
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
@@ -194,8 +195,27 @@ let DB = load();
 function cur(){ return DB[DB._current]; }
 
 /* ====== AUDIO (Web Audio, ADSR douce, son piano-like) ====== */
-let actx;
+let actx, audioUnlocked=false;
 function ac(){ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") actx.resume(); return actx; }
+/* Déblocage audio robuste (iOS/Safari) : sur iPad/iPhone l'AudioContext démarre
+   "suspended" et n'est réellement débloqué que si on (1) le resume ET (2) joue un son
+   PENDANT un vrai geste tactile. Comme le premier accord part d'un setTimeout (hors
+   geste), certains appareils restaient muets. On débloque donc au tout premier contact. */
+function unlockAudio(){
+  const ctx=ac();
+  if(ctx.state==="suspended"){ ctx.resume(); }
+  if(!audioUnlocked){
+    try{
+      const b=ctx.createBuffer(1,1,22050);
+      const s=ctx.createBufferSource(); s.buffer=b;
+      s.connect(ctx.destination); s.start(0);
+      audioUnlocked=true;
+    }catch(e){}
+  }
+}
+["pointerdown","touchend","mousedown","keydown"].forEach(ev=>
+  document.addEventListener(ev, unlockAudio, {passive:true})
+);
 // Synthèse "piano" : attaque vive, harmoniques, décroissance exponentielle, légère
 // réverbération et petit roulé d'accord pour un rendu chaud et naturel.
 let convolver=null;
@@ -228,11 +248,11 @@ function pianoNote(ctx, f, t0, amp){
   });
 }
 function playChord(keys){
-  const ctx=ac(), t=ctx.currentTime, GAIN=0.34;
+  const ctx=ac(), t=ctx.currentTime+0.06, GAIN=0.34; // +0.06s : évite les notes planifiées "dans le passé" juste après resume (sinon coupées sur certains appareils)
   keys.forEach((k,i)=>{ pianoNote(ctx, FREQ[k], t + i*0.018, GAIN/Math.sqrt(keys.length)); });
 }
 function blip(ok){
-  const ctx=ac(), t=ctx.currentTime;
+  const ctx=ac(), t=ctx.currentTime+0.04;
   if(ok){ // petit carillon doux montant (tierce majeure)
     [880, 1108.73].forEach((f,i)=>pianoNote(ctx, f, t+i*0.09, 0.16));
   } else { // note grave très douce, jamais désagréable
